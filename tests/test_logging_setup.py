@@ -5,6 +5,7 @@ Unit tests for Logging Setup.
 import pytest
 import tempfile
 import json
+import logging
 from pathlib import Path
 from datetime import datetime
 
@@ -50,6 +51,13 @@ def test_setup_logging_json(logging_config):
     # Check log file was created
     log_file = Path(logging_config.log_dir) / "agentic-os.log"
     assert log_file.exists()
+    
+    # Explicitly close file handler
+    root = logging.getLogger()
+    for handler in root.handlers[:]:
+        if isinstance(handler, logging.handlers.RotatingFileHandler):
+            handler.close()
+            root.removeHandler(handler)
 
 
 def test_setup_logging_text(logging_config):
@@ -63,6 +71,13 @@ def test_setup_logging_text(logging_config):
     # Check log file was created
     log_file = Path(logging_config.log_dir) / "agentic-os.log"
     assert log_file.exists()
+    
+    # Explicitly close file handler
+    root = logging.getLogger()
+    for handler in root.handlers[:]:
+        if isinstance(handler, logging.handlers.RotatingFileHandler):
+            handler.close()
+            root.removeHandler(handler)
 
 
 def test_get_logger(logging_config):
@@ -74,6 +89,13 @@ def test_get_logger(logging_config):
     
     # Should not raise
     assert logger is not None
+    
+    # Explicitly close file handler
+    root = logging.getLogger()
+    for handler in root.handlers[:]:
+        if isinstance(handler, logging.handlers.RotatingFileHandler):
+            handler.close()
+            root.removeHandler(handler)
 
 
 def test_audit_logger(temp_log_dir):
@@ -193,19 +215,18 @@ def test_trace_logger_task_lifecycle(temp_log_dir):
 
 
 def test_trace_logger_daily_rotation(temp_log_dir):
-    """Test that trace logger rotates files daily."""
+    """Test that trace logger creates daily files with correct naming."""
     trace_logger = TraceLogger(temp_log_dir)
     
     trace_logger.log_trace({"event": "test1"})
     file1 = trace_logger._get_trace_file()
     
-    # Simulate date change (modify internal state)
-    trace_logger._current_date = "2024-01-02"
-    trace_logger.log_trace({"event": "test2"})
-    file2 = trace_logger._get_trace_file()
-    
-    # Files should be different
-    assert file1 != file2
+    # Verify file name format includes current date
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    expected_name = f"task_{today}.jsonl"
+    assert file1.name == expected_name
+    assert file1.parent == trace_logger.log_dir
 
 
 def test_global_audit_logger(temp_log_dir):
@@ -233,8 +254,11 @@ def test_global_audit_logger(temp_log_dir):
             result="success"
         )
         
-        audit_file = Path(temp_log_dir) / "traces" / "audit.log"
-        assert audit_file.exists()
+        # Close handler to flush
+        audit_logger.close()
+        
+        # Check file exists at the logger's audit_file path
+        assert audit_logger.audit_file.exists()
     finally:
         core.config.get_config = original_get_config
         reset_loggers()

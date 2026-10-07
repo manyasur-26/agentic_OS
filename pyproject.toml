@@ -1,0 +1,25 @@
+[project]
+name = "agentic-os"
+version = "0.1.0"
+description = "Agentic OS - Userspace Sandwich Layer"
+requires-python = ">=3.11"
+dependencies = [
+    "pyyaml>=6.0",
+    "structlog>=23.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+asyncio_default_test_loop_scope = "function"
+testpaths = ["tests"]

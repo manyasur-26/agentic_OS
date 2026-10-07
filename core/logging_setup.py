@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 import structlog
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .config import get_config, LoggingConfig
 
@@ -173,7 +173,7 @@ class AuditLogger:
             details: Optional additional details
         """
         log_entry = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "event_type": event_type,
             "actor": actor,
             "action": action,
@@ -212,18 +212,15 @@ class TraceLogger:
     
     def _get_trace_file(self) -> Path:
         """
-        Get the current trace file path (rotates daily).
+        Get the trace file for the current date.
         
         Returns:
             Path to today's trace file
         """
-        today = datetime.utcnow().strftime("%Y-%m-%d")
-        
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         if self._current_date != today:
             self._current_date = today
-            self._current_file = self.log_dir / f"task_{today}.jsonl"
-        
-        return self._current_file
+        return self.log_dir / f"task_{self._current_date}.jsonl"
     
     def log_trace(self, trace_data: dict) -> None:
         """
@@ -236,7 +233,7 @@ class TraceLogger:
         
         # Add timestamp if not present
         if "timestamp" not in trace_data:
-            trace_data["timestamp"] = datetime.utcnow().isoformat()
+            trace_data["timestamp"] = datetime.now(timezone.utc).isoformat()
         
         import json
         with open(trace_file, 'a') as f:

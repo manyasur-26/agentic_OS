@@ -6,6 +6,7 @@ Supports environment variable interpolation and default values.
 """
 
 import os
+import re
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -13,6 +14,8 @@ import yaml
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
+
+_ENV_PATTERN = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-(.*?))?\}')
 
 
 @dataclass
@@ -134,25 +137,32 @@ class ConfigLoader:
             Value with environment variables replaced
         """
         if isinstance(value, str):
-            # Replace ${VAR_NAME} with environment variable
-            if "${" in value and "}" in value:
-                parts = value.split("${")
-                result = [parts[0]]
-                for part in parts[1:]:
-                    if "}" in part:
-                        var_name, rest = part.split("}", 1)
-                        env_value = os.environ.get(var_name, "")
-                        result.append(env_value)
-                        result.append(rest)
-                    else:
-                        result.append("${" + part)
-                return "".join(result)
-            return value
+            return self._interpolate_env(value)
         elif isinstance(value, dict):
             return {k: self._interpolate_env_vars(v) for k, v in value.items()}
         elif isinstance(value, list):
             return [self._interpolate_env_vars(item) for item in value]
         return value
+    
+    def _interpolate_env(self, text: str) -> str:
+        """
+        Replace ${VAR} or ${VAR:-default} with env value.
+        
+        Args:
+            text: String to interpolate
+            
+        Returns:
+            String with environment variables replaced
+        """
+        def replacer(match):
+            var_name = match.group(1)
+            default = match.group(2)
+            value = os.environ.get(var_name)
+            if value is None:
+                return default if default is not None else ""
+            return value
+        
+        return _ENV_PATTERN.sub(replacer, text)
     
     def load_yaml(self, path: str) -> Dict[str, Any]:
         """

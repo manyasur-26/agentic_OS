@@ -19,7 +19,7 @@ from core.intent_bus import (
 @pytest.fixture
 async def bus():
     """Create a fresh intent bus for each test."""
-    reset_intent_bus()
+    await reset_intent_bus()
     bus = get_intent_bus()
     await bus.start()
     yield bus
@@ -217,7 +217,7 @@ async def test_unsubscribe(bus):
 async def test_queue_full_drops_message(bus):
     """Test that messages are dropped when queue is full."""
     # Create a bus with small queue size
-    reset_intent_bus()
+    await reset_intent_bus()
     small_bus = IntentBus(max_queue_size=2)
     await small_bus.start()
     

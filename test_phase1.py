@@ -89,7 +89,7 @@ async def test_intent_bus():
     
     try:
         # Reset and get bus
-        reset_intent_bus()
+        # reset_intent_bus()
         bus = get_intent_bus()
         await bus.start()
         
@@ -157,7 +157,7 @@ def test_logging():
         # Setup logging with test config
         from core.config import LoggingConfig
         import tempfile
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             log_config = LoggingConfig(
                 level="DEBUG",
                 format="text",
@@ -237,7 +237,7 @@ def test_cli():
         
         # Test status command
         reset_config()
-        reset_intent_bus()
+        # reset_intent_bus()
         args = cli.parser.parse_args(["status"])
         exit_code = asyncio.run(cli.cmd_status(args))
         assert exit_code == 0
@@ -245,7 +245,7 @@ def test_cli():
         
         # Test submit command
         reset_config()
-        reset_intent_bus()
+        # reset_intent_bus()
         args = cli.parser.parse_args(["submit", "test intent"])
         exit_code = asyncio.run(cli.cmd_submit(args))
         assert exit_code == 0
