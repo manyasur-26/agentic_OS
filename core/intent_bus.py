@@ -12,9 +12,17 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set
 import json
-import logging
+# import logging
+from .logging_setup import get_logger
 
-logger = logging.getLogger(__name__)
+from .exceptions import (
+    IntentBusError,
+    IntentBusFullError,
+    NoSubscriberError,
+    IntentTimeoutError
+)
+
+logger = get_logger("intent_bus")
 
 
 class IntentType(Enum):
@@ -164,12 +172,21 @@ class IntentBus:
                     self._subscribers[intent_type].remove(queue)
                     logger.debug("Unsubscribed from %s", intent_type.value)
     
-    async def publish(self, message: IntentMessage) -> None:
+    async def publish(self, message: IntentMessage, require_subscriber: bool = False) -> None:
         """
-        Publish a message to all subscribers of its type.
-        
+         Publish a message to all subscribers of its type.
+
         Args:
-            message: The IntentMessage to publish
+            message: The IntentMessage to publish.
+            require_subscriber: If True, raise NoSubscriberError when no
+                subscribers exist, and raise IntentBusFullError instead of
+                silently dropping when a queue is full.
+
+        Raises:
+            NoSubscriberError: When require_subscriber=True and no subscribers.
+            IntentBusFullError: When require_subscriber=True and a subscriber
+                queue is full.
+            IntentBusError: When publishing fails for any other reason.
         """
         if not self._running:
             logger.warning("Attempted to publish while bus not running")
@@ -188,20 +205,47 @@ class IntentBus:
             subscribers = self._subscribers.get(message.type, []).copy()
         
         if not subscribers:
+            if require_subscriber:
+                raise NoSubscriberError(
+                    f"No subscribers for intent type {message.type.value}",
+                    intent_type=message.type.value,
+                    intent_id=message.intent_id
+                )
             logger.debug("No subscribers for %s", message.type.value)
             return
         
         # Publish to all subscribers
+                # Publish to all subscribers
         for queue in subscribers:
             try:
-                # Priority-based routing - try to put, drop if full
                 await asyncio.wait_for(queue.put(message), timeout=0.1)
             except asyncio.TimeoutError:
                 self._dropped_count += 1
-                logger.warning("Dropped message %s (queue full)", message.intent_id)
+                logger.warning(
+                    "Dropped message: subscriber queue full (intent_id=%s, intent_type=%s, queue_size=%d)",
+                    message.intent_id,
+                    message.type.value,
+                    self._max_queue_size
+                )
+                # Strict mode: raise instead of silently dropping
+                if require_subscriber:
+                    raise IntentBusFullError(
+                        f"Subscriber queue full for message {message.intent_id}",
+                        intent_id=message.intent_id,
+                        intent_type=message.type.value,
+                        queue_size=self._max_queue_size,
+                    )
+            except asyncio.CancelledError:
+                # Don't swallow cancellation — propagate for clean shutdown
+                raise
             except Exception as e:
                 logger.error("Error publishing to queue: %s", e)
-        
+                raise IntentBusError(
+                    f"Error publishing message {message.intent_id}",
+                    intent_id=message.intent_id,
+                    original_error=str(e),
+                ) from e
+
         logger.debug("Published %s to %d subscribers", 
                     message.intent_id, len(subscribers))
     
@@ -210,7 +254,8 @@ class IntentBus:
                                 intent_type: IntentType,
                                 payload: Dict[str, Any],
                                 priority: Priority = Priority.NORMAL,
-                                correlation_id: Optional[str] = None) -> IntentMessage:
+                                correlation_id: Optional[str] = None,
+                                require_subscriber: bool = False) -> IntentMessage:
         """
         Convenience method to create and publish a message immediately.
         
@@ -220,9 +265,14 @@ class IntentBus:
             payload: Message payload
             priority: Priority level
             correlation_id: Optional correlation ID
+            require_subscriber: If True, raise NoSubscriberError when no subscribers exist
             
         Returns:
             The created IntentMessage
+            
+        Raises:
+            IntentBusFullError: When subscriber queue is full
+            NoSubscriberError: When require_subscriber=True and no subscribers exist
         """
         message = IntentMessage(
             source=source,
@@ -231,8 +281,74 @@ class IntentBus:
             priority=priority,
             correlation_id=correlation_id
         )
-        await self.publish(message)
+        await self.publish(message, require_subscriber=require_subscriber)
         return message
+    
+    async def request_reply(self,
+                           request_type: IntentType,
+                           response_type: IntentType,
+                           payload: Dict[str, Any],
+                           source: str,
+                           timeout: float = 5.0) -> IntentMessage:
+        """
+        Send a request and wait for a response using correlation tracking.
+        
+        Args:
+            request_type: Type of the request intent
+            response_type: Type of the expected response intent
+            payload: Request payload
+            source: Component making the request
+            timeout: Maximum time to wait for response in seconds
+            
+        Returns:
+            The response IntentMessage
+            
+        Raises:
+            IntentTimeoutError: When no response arrives within timeout
+            NoSubscriberError: When no subscribers are listening for the request
+        """
+        correlation_id = str(uuid.uuid4())
+        
+        # Subscribe to response type
+        response_queue = await self.subscribe(response_type)
+        
+        try:
+            # Publish request
+            await self.publish_immediate(
+                source=source,
+                intent_type=request_type,
+                payload=payload,
+                correlation_id=correlation_id,
+                require_subscriber=True
+            )
+            
+            # Wait for response
+            try:
+                response = await asyncio.wait_for(
+                    response_queue.get(),
+                    timeout=timeout
+                )
+                
+                # Verify correlation ID matches
+                if response.correlation_id != correlation_id:
+                    logger.warning(
+                        "Received response with mismatched correlation ID: %s != %s",
+                        response.correlation_id, correlation_id
+                    )
+                
+                return response
+                
+            except asyncio.TimeoutError:
+                raise IntentTimeoutError(
+                    f"No response received within {timeout}s",
+                    correlation_id=correlation_id,
+                    request_type=request_type.value,
+                    response_type=response_type.value,
+                    timeout=timeout
+                )
+        finally:
+            # Clean up subscription
+            await self.unsubscribe(response_type, response_queue)
     
     async def get_correlation_history(self, correlation_id: str) -> List[IntentMessage]:
         """
