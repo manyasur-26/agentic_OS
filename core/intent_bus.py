@@ -12,8 +12,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set
 import json
-# import logging
-from .logging_setup import get_logger
+import logging
+# from .logging_setup import get_logger
 
 from .exceptions import (
     IntentBusError,
@@ -22,7 +22,8 @@ from .exceptions import (
     IntentTimeoutError
 )
 
-logger = get_logger("intent_bus")
+# logger = get_logger("intent_bus")
+logger = logging.getLogger("agentic_os.intent_bus")
 
 
 class IntentType(Enum):

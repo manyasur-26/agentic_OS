@@ -7,13 +7,15 @@ Supports environment variable interpolation and default values.
 
 import os
 import re
-import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 import yaml
 from dataclasses import dataclass, field
 
-logger = logging.getLogger(__name__)
+from .exceptions import ConfigError, ConfigNotFoundError, ConfigValidationError
+import logging
+
+logger = logging.getLogger("agentic_os.config")
 
 _ENV_PATTERN = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-(.*?))?\}')
 
@@ -164,30 +166,120 @@ class ConfigLoader:
         
         return _ENV_PATTERN.sub(replacer, text)
     
-    def load_yaml(self, path: str) -> Dict[str, Any]:
+    def _validate_value_type(self, value: Any, expected_type: type, field_name: str) -> None:
+        """
+        Validate that a value matches the expected type.
+        
+        Args:
+            value: The value to validate
+            expected_type: The expected type
+            field_name: Name of the field being validated
+            
+        Raises:
+            ConfigValidationError: If type doesn't match
+        """
+        if not isinstance(value, expected_type):
+            raise ConfigValidationError(
+                f"Invalid type for {field_name}: expected {expected_type.__name__}, got {type(value).__name__}",
+                field_name=field_name,
+                expected_type=expected_type.__name__,
+                actual_type=type(value).__name__,
+                value=value
+            )
+    
+    def _validate_range(self, value: int, min_val: int, max_val: int, field_name: str) -> None:
+        """
+        Validate that a numeric value is within range.
+        
+        Args:
+            value: The value to validate
+            min_val: Minimum allowed value
+            max_val: Maximum allowed value
+            field_name: Name of the field being validated
+            
+        Raises:
+            ConfigValidationError: If value is out of range
+        """
+        if not (min_val <= value <= max_val):
+            raise ConfigValidationError(
+                f"Value for {field_name} must be between {min_val} and {max_val}, got {value}",
+                field_name=field_name,
+                value=value,
+                min_value=min_val,
+                max_value=max_val
+            )
+    
+    def _validate_enum(self, value: str, valid_values: list, field_name: str) -> None:
+        """
+        Validate that a string value is in the allowed set.
+        
+        Args:
+            value: The value to validate
+            valid_values: List of valid values
+            field_name: Name of the field being validated
+            
+        Raises:
+            ConfigValidationError: If value is not in valid_values
+        """
+        if value not in valid_values:
+            raise ConfigValidationError(
+                f"Invalid value for {field_name}: must be one of {valid_values}, got '{value}'",
+                field_name=field_name,
+                value=value,
+                valid_values=valid_values
+            )
+    
+    def load_yaml(self, path: str, required: bool = True) -> Dict[str, Any]:
         """
         Load a YAML file from disk.
         
         Args:
             path: Path to the YAML file
+            required: If True, raise ConfigNotFoundError when file doesn't exist
             
         Returns:
             Parsed YAML as dictionary
             
         Raises:
-            FileNotFoundError: If file doesn't exist
-            yaml.YAMLError: If YAML is invalid
+            ConfigNotFoundError: If file doesn't exist and required=True
+            ConfigValidationError: If YAML is invalid
         """
         path = os.path.expanduser(path)
         if not os.path.exists(path):
-            raise FileNotFoundError(f"Config file not found: {path}")
+            if required:
+                raise ConfigNotFoundError(
+                    f"Config file not found: {path}",
+                    path=path
+                )
+            logger.warning("Config file not found (optional): %s", path)
+            return {}
         
         logger.info("Loading config from %s", path)
-        with open(path, 'r') as f:
-            data = yaml.safe_load(f)
+        try:
+            with open(path, 'r') as f:
+                data = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            raise ConfigValidationError(
+                f"Invalid YAML in file {path}",
+                path=path,
+                yaml_error=str(e)
+            ) from e
+        except IOError as e:
+            raise ConfigNotFoundError(
+                f"Cannot read config file {path}",
+                path=path,
+                io_error=str(e)
+            ) from e
         
         if data is None:
             data = {}
+        
+        if not isinstance(data, dict):
+            raise ConfigValidationError(
+                f"Config file must contain a dictionary, got {type(data).__name__}",
+                path=path,
+                actual_type=type(data).__name__
+            )
         
         # Interpolate environment variables
         data = self._interpolate_env_vars(data)
@@ -202,17 +294,13 @@ class ConfigLoader:
             Config object with all settings
             
         Raises:
-            FileNotFoundError: If config file doesn't exist
-            ValueError: If config is invalid
+            ConfigNotFoundError: If config file doesn't exist
+            ConfigValidationError: If config is invalid
         """
         if self._config is not None:
             return self._config
         
-        try:
-            self._raw_config = self.load_yaml(self.config_path)
-        except FileNotFoundError:
-            logger.warning("Config file not found, using defaults")
-            self._raw_config = {}
+        self._raw_config = self.load_yaml(self.config_path, required=False)
         
         # Build Config object from raw data
         self._config = self._build_config(self._raw_config)
@@ -228,6 +316,9 @@ class ConfigLoader:
             
         Returns:
             Config object
+            
+        Raises:
+            ConfigValidationError: If any config values are invalid
         """
         # Extract nested configs
         planner_data = data.get("planner", {})
@@ -236,27 +327,111 @@ class ConfigLoader:
         voice_data = data.get("voice", {})
         logging_data = data.get("logging", {})
         
+        # Validate planner config
+        if not isinstance(planner_data, dict):
+            raise ConfigValidationError(
+                "planner section must be a dictionary",
+                section="planner",
+                actual_type=type(planner_data).__name__
+            )
+        
+        max_iterations = planner_data.get("max_iterations", 3)
+        if isinstance(max_iterations, int):
+            self._validate_range(max_iterations, 1, 10, "planner.max_iterations")
+        
+        temperature = planner_data.get("temperature", 0.7)
+        if isinstance(temperature, (int, float)):
+            self._validate_range(temperature, 0.0, 2.0, "planner.temperature")
+        
+        # Validate memory config
+        if not isinstance(memory_data, dict):
+            raise ConfigValidationError(
+                "memory section must be a dictionary",
+                section="memory",
+                actual_type=type(memory_data).__name__
+            )
+        
+        working_memory_size = memory_data.get("working_memory_size", 1000)
+        if isinstance(working_memory_size, int):
+            self._validate_range(working_memory_size, 100, 100000, "memory.working_memory_size")
+        
+        faiss_index_dim = memory_data.get("faiss_index_dim", 768)
+        if isinstance(faiss_index_dim, int):
+            self._validate_range(faiss_index_dim, 128, 4096, "memory.faiss_index_dim")
+        
+        # Validate scheduler config
+        if not isinstance(scheduler_data, dict):
+            raise ConfigValidationError(
+                "scheduler section must be a dictionary",
+                section="scheduler",
+                actual_type=type(scheduler_data).__name__
+            )
+        
+        worker_count = scheduler_data.get("worker_count", 4)
+        if isinstance(worker_count, int):
+            self._validate_range(worker_count, 1, 32, "scheduler.worker_count")
+        
+        # Validate voice config
+        if not isinstance(voice_data, dict):
+            raise ConfigValidationError(
+                "voice section must be a dictionary",
+                section="voice",
+                actual_type=type(voice_data).__name__
+            )
+        
+        vad_threshold = voice_data.get("vad_threshold", 0.5)
+        if isinstance(vad_threshold, (int, float)):
+            self._validate_range(vad_threshold, 0.0, 1.0, "voice.vad_threshold")
+        
+        # Validate logging config
+        if not isinstance(logging_data, dict):
+            raise ConfigValidationError(
+                "logging section must be a dictionary",
+                section="logging",
+                actual_type=type(logging_data).__name__
+            )
+        
+        log_level = logging_data.get("level", "INFO")
+        if isinstance(log_level, str):
+            self._validate_enum(
+                log_level,
+                ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+                "logging.level"
+            )
+        
+        log_format = logging_data.get("format", "json")
+        if isinstance(log_format, str):
+            self._validate_enum(log_format, ["json", "text"], "logging.format")
+        
+        max_file_size = logging_data.get("max_file_size", 10485760)
+        if isinstance(max_file_size, int):
+            self._validate_range(max_file_size, 1024, 1073741824, "logging.max_file_size")
+        
+        backup_count = logging_data.get("backup_count", 5)
+        if isinstance(backup_count, int):
+            self._validate_range(backup_count, 1, 100, "logging.backup_count")
+        
         return Config(
             base_dir=data.get("base_dir", "~/.agentic-os"),
             planner=PlannerConfig(
                 model_name=planner_data.get("model_name", "qwen2.5:7b"),
                 critic_model=planner_data.get("critic_model", "qwen2.5:1.5b"),
                 ollama_host=planner_data.get("ollama_host", "http://localhost:11434"),
-                max_iterations=planner_data.get("max_iterations", 3),
-                temperature=planner_data.get("temperature", 0.7),
+                max_iterations=max_iterations if isinstance(max_iterations, int) else 3,
+                temperature=temperature if isinstance(temperature, (int, float)) else 0.7,
                 timeout=planner_data.get("timeout", 30)
             ),
             memory=MemoryConfig(
-                working_memory_size=memory_data.get("working_memory_size", 1000),
+                working_memory_size=working_memory_size if isinstance(working_memory_size, int) else 1000,
                 episodic_db_path=memory_data.get("episodic_db_path", 
                                                 "~/.agentic-os/memory/episodic.db"),
                 semantic_db_path=memory_data.get("semantic_db_path",
                                                 "~/.agentic-os/memory/semantic.db"),
-                faiss_index_dim=memory_data.get("faiss_index_dim", 768),
+                faiss_index_dim=faiss_index_dim if isinstance(faiss_index_dim, int) else 768,
                 faiss_index_type=memory_data.get("faiss_index_type", "flat")
             ),
             scheduler=SchedulerConfig(
-                worker_count=scheduler_data.get("worker_count", 4),
+                worker_count=worker_count if isinstance(worker_count, int) else 4,
                 cgroup_path=scheduler_data.get("cgroup_path", "/sys/fs/cgroup"),
                 urgent_slice=scheduler_data.get("urgent_slice", "urgent.slice"),
                 normal_slice=scheduler_data.get("normal_slice", "normal.slice"),
@@ -270,17 +445,17 @@ class ConfigLoader:
             ),
             voice=VoiceConfig(
                 wake_word_model=voice_data.get("wake_word_model", "hey_jarvis"),
-                vad_threshold=voice_data.get("vad_threshold", 0.5),
+                vad_threshold=vad_threshold if isinstance(vad_threshold, (int, float)) else 0.5,
                 stt_model=voice_data.get("stt_model", "base"),
                 tts_model=voice_data.get("tts_model", "en_US-lessac-medium"),
                 audio_device=voice_data.get("audio_device")
             ),
             logging=LoggingConfig(
-                level=logging_data.get("level", "INFO"),
-                format=logging_data.get("format", "json"),
+                level=log_level if isinstance(log_level, str) else "INFO",
+                format=log_format if isinstance(log_format, str) else "json",
                 log_dir=logging_data.get("log_dir", "~/.agentic-os/logs"),
-                max_file_size=logging_data.get("max_file_size", 10485760),
-                backup_count=logging_data.get("backup_count", 5)
+                max_file_size=max_file_size if isinstance(max_file_size, int) else 10485760,
+                backup_count=backup_count if isinstance(backup_count, int) else 5
             )
         )
     
@@ -290,12 +465,12 @@ class ConfigLoader:
         
         Returns:
             Policy dictionary
+            
+        Raises:
+            ConfigNotFoundError: If policy file doesn't exist
+            ConfigValidationError: If policy YAML is invalid
         """
-        try:
-            return self.load_yaml(self.DEFAULT_POLICY_PATH)
-        except FileNotFoundError:
-            logger.warning("Policy file not found, using empty policy")
-            return {}
+        return self.load_yaml(self.DEFAULT_POLICY_PATH, required=False)
     
     def load_registry(self) -> Dict[str, Any]:
         """
@@ -303,12 +478,12 @@ class ConfigLoader:
         
         Returns:
             Registry dictionary
+            
+        Raises:
+            ConfigNotFoundError: If registry file doesn't exist
+            ConfigValidationError: If registry YAML is invalid
         """
-        try:
-            return self.load_yaml(self.DEFAULT_REGISTRY_PATH)
-        except FileNotFoundError:
-            logger.warning("Registry file not found, using empty registry")
-            return {}
+        return self.load_yaml(self.DEFAULT_REGISTRY_PATH, required=False)
     
     def reload(self) -> Config:
         """
@@ -316,6 +491,10 @@ class ConfigLoader:
         
         Returns:
             Updated Config object
+            
+        Raises:
+            ConfigNotFoundError: If config file doesn't exist
+            ConfigValidationError: If config is invalid
         """
         self._config = None
         self._raw_config = None
@@ -336,6 +515,10 @@ def get_config(config_path: Optional[str] = None) -> Config:
         
     Returns:
         The global Config object
+        
+    Raises:
+        ConfigNotFoundError: If config file doesn't exist
+        ConfigValidationError: If config is invalid
     """
     global _global_config, _global_loader
     

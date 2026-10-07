@@ -100,12 +100,15 @@ class ConfigError(AgenticOSError):
     pass
 
 
-class ConfigNotFoundError(ConfigError):
+class ConfigNotFoundError(ConfigError, FileNotFoundError):
     """
     Raised when a required configuration file cannot be found.
     
     This typically happens when the system is started without
     proper configuration files in place.
+
+    Subclasses FileNotFoundError so legacy `except FileNotFoundError:`
+    clauses continue to work.
     """
     pass
 
