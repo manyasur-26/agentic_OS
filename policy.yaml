@@ -1,0 +1,129 @@
+# Agentic OS Policy Configuration
+# Defines security policies and access controls
+
+# Policy version
+version: "1.0"
+
+# Default policy action (allow, deny)
+default_action: allow
+
+# Capability tokens (ed25519 keys for authorization)
+capability_tokens:
+  - name: admin_token
+    fingerprint: "example_admin_fingerprint"
+    permissions:
+      - "*"
+  - name: user_token
+    fingerprint: "example_user_fingerprint"
+    permissions:
+      - "file.read:*"
+      - "file.write:~/Documents/*"
+      - "shell:read-only"
+
+# Resource access rules
+resource_rules:
+  # File system rules
+  - type: file
+    path: ~/.ssh/*
+    action: deny
+    reason: "SSH keys are sensitive"
+  
+  - type: file
+    path: ~/.gnupg/*
+    action: deny
+    reason: "GPG keys are sensitive"
+  
+  - type: file
+    path: /etc/*
+    action: deny
+    reason: "System configuration files"
+  
+  - type: file
+    path: ~/Documents/*
+    action: allow
+    reason: "User documents"
+  
+  - type: file
+    path: ~/Downloads/*
+    action: allow
+    reason: "User downloads"
+  
+  # Network rules
+  - type: network
+    domain: "*.internal"
+    action: allow
+    reason: "Internal network access"
+  
+  - type: network
+    domain: "*"
+    action: deny
+    reason: "External network access denied by default"
+  
+  # Shell command rules
+  - type: shell
+    command: rm
+    action: deny
+    reason: "Destructive commands blocked"
+  
+  - type: shell
+    command: sudo
+    action: deny
+    reason: "Privilege escalation blocked"
+  
+  - type: shell
+    command: cat
+    action: allow
+    reason: "Read-only commands allowed"
+
+# Tool-specific policies
+tool_policies:
+  file_ops:
+    max_file_size: 104857600  # 100MB
+    allowed_extensions:
+      - .txt
+      - .pdf
+      - .md
+      - .json
+      - .yaml
+      - .csv
+  
+  shell:
+    max_execution_time: 60  # seconds
+    allowed_commands:
+      - ls
+      - cat
+      - grep
+      - find
+      - head
+      - tail
+      - wc
+      - sort
+      - uniq
+  
+  http:
+    allowed_domains:
+      - api.openai.com
+      - localhost
+      - 127.0.0.1
+    max_request_size: 1048576  # 1MB
+    timeout: 30
+
+# Audit configuration
+audit:
+  log_all_actions: true
+  log_denied_actions: true
+  log_successful_actions: true
+  sensitive_data_redaction:
+    - password
+    - token
+    - api_key
+    - secret
+
+# Sandbox configuration
+sandbox:
+  enable_landlock: true
+  enable_seccomp: true
+  enable_network_namespace: true
+  enable_cgroup_isolation: true
+  max_memory: 1073741824  # 1GB
+  max_cpu_time: 300  # seconds

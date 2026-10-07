@@ -1,0 +1,29 @@
+[Unit]
+Description=Agentic OS Voice Daemon
+Documentation=https://github.com/agentic-os/agentic-os
+After=agentic-os.service
+PartOf=agentic-os.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 ~/.agentic-os/voice/voice_daemon.py
+WorkingDirectory=%h/.agentic-os
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+# Audio access
+DeviceAllow=/dev/snd rw
+
+# Resource limits
+LimitNOFILE=65536
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.agentic-os
+
+[Install]
+WantedBy=default.target

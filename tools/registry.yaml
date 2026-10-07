@@ -1,0 +1,253 @@
+# Agentic OS Tool Registry
+# Defines available tools and their capabilities
+
+version: "1.0"
+
+# Tool definitions
+tools:
+  # File operations tool
+  - name: file_ops
+    description: "Read, write, list, and manipulate files"
+    module: tools.file_ops
+    class: FileOpsTool
+    enabled: true
+    sandbox:
+      enable_landlock: true
+      enable_seccomp: true
+      allowed_paths:
+        - ~/Documents
+        - ~/Downloads
+        - ~/.agentic-os
+    policy:
+      max_file_size: 104857600  # 100MB
+      allowed_operations:
+        - read
+        - write
+        - list
+        - delete
+    input_schema:
+      type: object
+      properties:
+        operation:
+          type: string
+          enum: [read, write, list, delete]
+        path:
+          type: string
+        content:
+          type: string
+    output_schema:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+        error:
+          type: string
+
+  # Shell command tool
+  - name: shell
+    description: "Execute shell commands with sandboxing"
+    module: tools.shell
+    class: ShellTool
+    enabled: true
+    sandbox:
+      enable_landlock: true
+      enable_seccomp: true
+      enable_network_namespace: false
+      enable_cgroup_isolation: true
+    policy:
+      max_execution_time: 60
+      allowed_commands:
+        - ls
+        - cat
+        - grep
+        - find
+        - head
+        - tail
+        - wc
+        - sort
+        - uniq
+        - file
+        - stat
+    input_schema:
+      type: object
+      properties:
+        command:
+          type: string
+        args:
+          type: array
+          items:
+            type: string
+        working_dir:
+          type: string
+    output_schema:
+      type: object
+      properties:
+        exit_code:
+          type: integer
+        stdout:
+          type: string
+        stderr:
+          type: string
+
+  # HTTP client tool
+  - name: http
+    description: "Make HTTP requests to external APIs"
+    module: tools.http
+    class: HttpTool
+    enabled: true
+    sandbox:
+      enable_landlock: false
+      enable_seccomp: true
+      enable_network_namespace: false
+    policy:
+      allowed_domains:
+        - api.openai.com
+        - localhost
+        - 127.0.0.1
+      max_request_size: 1048576  # 1MB
+      timeout: 30
+    input_schema:
+      type: object
+      properties:
+        method:
+          type: string
+          enum: [GET, POST, PUT, DELETE, PATCH]
+        url:
+          type: string
+        headers:
+          type: object
+        body:
+          type: object
+    output_schema:
+      type: object
+      properties:
+        status_code:
+          type: integer
+        headers:
+          type: object
+        body:
+          type: object
+
+  # PDF processing tool
+  - name: pdf
+    description: "Extract text and metadata from PDF files"
+    module: tools.pdf
+    class: PdfTool
+    enabled: true
+    sandbox:
+      enable_landlock: true
+      enable_seccomp: true
+    policy:
+      max_file_size: 52428800  # 50MB
+    input_schema:
+      type: object
+      properties:
+        operation:
+          type: string
+          enum: [extract_text, extract_metadata, page_count]
+        path:
+          type: string
+    output_schema:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+        error:
+          type: string
+
+  # Email tool
+  - name: email
+    description: "Send and read emails"
+    module: tools.email
+    class: EmailTool
+    enabled: false  # Disabled by default, requires configuration
+    sandbox:
+      enable_landlock: true
+      enable_seccomp: true
+    policy:
+      max_recipients: 10
+      max_attachment_size: 10485760  # 10MB
+    input_schema:
+      type: object
+      properties:
+        operation:
+          type: string
+          enum: [send, read, list]
+        to:
+          type: array
+          items:
+            type: string
+        subject:
+          type: string
+        body:
+          type: string
+    output_schema:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+        error:
+          type: string
+
+  # Voice I/O tool
+  - name: voice
+    description: "Text-to-speech and speech-to-text"
+    module: tools.voice
+    class: VoiceTool
+    enabled: true
+    sandbox:
+      enable_landlock: false
+      enable_seccomp: true
+    policy:
+      max_recording_duration: 300  # seconds
+    input_schema:
+      type: object
+      properties:
+        operation:
+          type: string
+          enum: [speak, listen]
+        text:
+          type: string
+        duration:
+          type: integer
+    output_schema:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+        error:
+          type: string
+
+# Tool groups for semantic routing
+tool_groups:
+  file_management:
+    - file_ops
+    - shell
+  
+  information_retrieval:
+    - file_ops
+    - http
+    - pdf
+  
+  communication:
+    - email
+    - voice
+  
+  system_interaction:
+    - shell
+    - file_ops
+
+# Semantic routing configuration
+semantic_routing:
+  enabled: true
+  embedding_model: all-MiniLM-L6-v2
+  similarity_threshold: 0.7
+  max_suggestions: 3

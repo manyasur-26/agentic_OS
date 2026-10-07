@@ -1,0 +1,78 @@
+# Agentic OS Configuration File
+# This file controls the behavior of the Agentic OS userspace layer
+
+# Base directory for all Agentic OS data
+base_dir: ~/.agentic-os
+
+# Planner configuration (cognitive core)
+planner:
+  # Main model for task decomposition
+  model_name: qwen2.5:7b
+  # Critic model for validation
+  critic_model: qwen2.5:1.5b
+  # Ollama API endpoint
+  ollama_host: http://localhost:11434
+  # Maximum planner iterations
+  max_iterations: 3
+  # Temperature for generation (0.0 - 1.0)
+  temperature: 0.7
+  # Request timeout in seconds
+  timeout: 30
+
+# Memory configuration
+memory:
+  # Working memory size (number of items)
+  working_memory_size: 1000
+  # Path to episodic memory database
+  episodic_db_path: ~/.agentic-os/memory/episodic.db
+  # Path to semantic memory database
+  semantic_db_path: ~/.agentic-os/memory/semantic.db
+  # FAISS index dimension (embedding size)
+  faiss_index_dim: 768
+  # FAISS index type (flat, ivf, hnsw)
+  faiss_index_type: flat
+
+# Scheduler configuration
+scheduler:
+  # Number of worker processes
+  worker_count: 4
+  # Path to cgroups v2 mount point
+  cgroup_path: /sys/fs/cgroup
+  # Systemd slice for urgent tasks
+  urgent_slice: urgent.slice
+  # Systemd slice for normal tasks
+  normal_slice: normal.slice
+  # Systemd slice for background tasks
+  background_slice: background.slice
+  # Priority scoring weights
+  priority_weights:
+    urgency: 1.0
+    deadline: 0.8
+    importance: 0.6
+    cost: 0.4
+
+# Voice subsystem configuration
+voice:
+  # Wake word model name
+  wake_word_model: hey_jarvis
+  # Voice activity detection threshold (0.0 - 1.0)
+  vad_threshold: 0.5
+  # Speech-to-text model size (tiny, base, small, medium, large)
+  stt_model: base
+  # Text-to-speech model
+  tts_model: en_US-lessac-medium
+  # Audio device (null for default)
+  audio_device: null
+
+# Logging configuration
+logging:
+  # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  level: INFO
+  # Log format (json, text)
+  format: json
+  # Directory for log files
+  log_dir: ~/.agentic-os/logs
+  # Maximum log file size in bytes (10MB default)
+  max_file_size: 10485760
+  # Number of backup log files to keep
+  backup_count: 5
